@@ -19,6 +19,9 @@ ssh coki@192.168.1.24 << 'EOF'
     cd /home/coki/humanAI/dev1/digital-human/
     # 进入项目目录
     source .venv/bin/activate
-    # test tts
-    python src/audio/tts.py
+    # test pipeline.py
+    export HF_ENDPOINT="https://hf-mirror.com"
+    export PYTHONPATH=$PWD
+
+    python src/audio/pipeline.py
 EOF

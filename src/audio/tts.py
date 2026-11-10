@@ -16,13 +16,13 @@ sys.path.append(str(COSYVOICE_ROOT / "third_party/Matcha-TTS"))
 from cosyvoice.cli.cosyvoice import AutoModel
 import sounddevice as sd
 
-class CosyVoiceManager:
+class TTS:
     _instance = None
 
     def __new__(cls, model_dir='/home/coki/humanAI/dev1/model/CosyVoice-300M-SFT'):
         # 单例模式：确保整个生命周期只加载一次模型，避免重复占用显存/内存
         if cls._instance is None:
-            cls._instance = super(CosyVoiceManager, cls).__new__(cls)
+            cls._instance = super(TTS, cls).__new__(cls)
             cls._instance.initialize(model_dir)
         return cls._instance
 
@@ -60,7 +60,7 @@ if __name__ == '__main__':
 
     # === 全局单例实例化 ===
     # 在模块导入时或程序入口处初始化一次即可全局调用
-    tts_engine = CosyVoiceManager()
+    tts_engine = TTS()
     text = "你好，我是通义生成式语音大模型，请问有什么可以帮您的吗？"
     # ['中文女', '中文男', '日语男', '粤语女', '英文女', '英文男', '韩语女']
     audio = tts_engine.text_2_audio(text, speaker='中文女', stream=False)

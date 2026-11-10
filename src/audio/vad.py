@@ -7,6 +7,7 @@ Voice Activity Detection using Silero VAD.
 from __future__ import annotations
 import numpy as np
 import torch
+from silero_vad import load_silero_vad, get_speech_timestamps, VADIterator
 from typing import Optional, Tuple
 
 
@@ -25,27 +26,15 @@ class VAD:
         self.min_silence_duration_ms = min_silence_duration_ms
         self.device = torch.device(device)
 
-        # 加载 Silero VAD
-        self.model, self.utils = torch.hub.load(
-            repo_or_dir="snakers4/silero-vad",
-            model="silero_vad",
-            force_reload=False,
-            onnx=False,               # 想更极致可改 True
-            trust_repo=True,
+        # 加载 Silero VAD 模型
+        self.model = load_silero_vad(
+            onnx=False  # 如果你想用 onnx 加速，可以改为 True
         )
         self.model.to(self.device)
         self.model.eval()
 
-        (
-            self.get_speech_timestamps,
-            self.save_audio,
-            self.read_audio,
-            self.VADIterator,
-            self.collect_chunks,
-        ) = self.utils
-
-        # 流式迭代器
-        self.vad_iterator = self.VADIterator(
+        # 初始化流式迭代器
+        self.vad_iterator = VADIterator(
             self.model,
             threshold=self.threshold,
             sampling_rate=self.sampling_rate,
@@ -78,7 +67,7 @@ class VAD:
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32)
         tensor = torch.from_numpy(audio)
-        return self.get_speech_timestamps(
+        return get_speech_timestamps(
             tensor,
             self.model,
             threshold=self.threshold,
@@ -94,5 +83,4 @@ if __name__ == "__main__":
     import soundfile as sf
 
     vad = VAD(threshold=0.5)
-    # audio, sr = sf.read("test.wav")
-    # print(vad.get_speech_timestamps(audio))
+    print("VAD 初始化成功！")

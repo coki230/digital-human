@@ -5,7 +5,7 @@ ASR using faster-whisper.
 """
 
 from __future__ import annotations
-from typing import Optional, Generator, Union
+from typing import Optional, Generator
 import numpy as np
 from faster_whisper import WhisperModel
 
@@ -14,8 +14,8 @@ class ASR:
     def __init__(
         self,
         model_size: str = "base",          # tiny / base / small / medium / large-v3
-        device: str = "cuda",              # ROCm 下用 "cuda"（HIP 兼容）
-        compute_type: str = "float16",     # 显存紧可用 "int8"
+        device: str = "cpu",              # ROCm 下用 "cuda"（HIP 兼容）
+        compute_type: str = "int8",     # 显存紧可用 "int8"
         language: Optional[str] = "zh",    # None 自动检测，"zh" 强制中文
         beam_size: int = 5,
     ):
@@ -27,6 +27,7 @@ class ASR:
             model_size,
             device=device,
             compute_type=compute_type,
+            cpu_threads=4,
             # download_root="./models/whisper",  # 可自定义缓存路径
         )
         print("[ASR] Ready.")
@@ -85,6 +86,6 @@ class ASR:
 if __name__ == "__main__":
     import soundfile as sf
 
-    asr = ASR(model_size="base", device="cuda", language="zh")
-    # audio, sr = sf.read("test.wav")
-    # print(asr.transcribe(audio))
+    asr = ASR(model_size="base", device="cpu", language="zh")
+    audio, sr = sf.read("test.wav")
+    print(asr.transcribe(audio))
