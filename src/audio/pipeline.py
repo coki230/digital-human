@@ -5,21 +5,17 @@
 """
 from __future__ import annotations
 
-# ===== 必须放在所有 import 之前 =====
-import os
-os.environ["CT2_USE_MKL"] = "0"
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-# ===================================
-
 import numpy as np
 import threading
 from typing import Optional, Callable, Generator
 from dataclasses import dataclass
+import soundfile as sf
 
-from src.audio.vad import VAD
 from src.audio.asr import ASR
+from src.audio.vad import VAD
 from src.audio.tts import TTS
+
+from loguru import logger
 
 
 @dataclass
@@ -159,11 +155,11 @@ class AudioPipeline:
 
                         # ASR
                         try:
-                            text = self.asr.transcribe(full_audio, sample_rate=self.sample_rate)
-                            text = text.strip()
-                            if text:
-                                logger.info(f"ASR Result: {text}")
-                                return text
+                            tet = self.asr.transcribe(full_audio, sample_rate=self.sample_rate)
+                            tet = tet.strip()
+                            if tet:
+                                logger.info(f"ASR Result: {tet}")
+                                return tet
                         except Exception as e:
                             logger.error(f"ASR failed: {e}")
                     return None
@@ -239,7 +235,6 @@ class AudioPipeline:
 # 快速测试
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    from loguru import logger
 
     logger.add(lambda msg: print(msg, end=""))
 
@@ -252,10 +247,27 @@ if __name__ == "__main__":
 
     # 测试 TTS 流式
     print("\n=== TTS Stream Test ===")
-    text = "你好，我是你的数字人助手，很高兴为你服务。"
-    for i, chunk in enumerate(pipeline.text_to_speech_stream(text)):
-        print(f"chunk {i}: shape={chunk.shape}, max={chunk.max():.3f}")
-        if i >= 5:  # 只打印前几块
-            break
+    # text = "你好，我是你的数字人助手，很高兴为你服务。"
+    # for i, chunk in enumerate(pipeline.text_to_speech_stream(text)):
+    #     print(f"chunk {i}: shape={chunk.shape}, max={chunk.max():.3f}")
+    #     if i >= 5:  # 只打印前几块
+    #         break
+
+    wav_path = "sft_0.wav"
+    logger.info(f"=== 2. 读取本地测试音频: {wav_path} ===")
+    audio, sr = sf.read(wav_path)
+
+    # 确保采样率为 16000Hz 且为单声道 float32
+    if sr != 16000:
+        logger.warning(f"采样率是 {sr}Hz，建议转为 16000Hz 以获得最佳 ASR 效果。")
+    if audio.ndim > 1:
+        audio = np.mean(audio, axis=1)
+    if audio.dtype != np.float32:
+        audio = audio.astype(np.float32)
+
+    logger.info("=== 3. 模拟输入 Pipeline 的 ASR 模块 ===")
+    # 这里直接调用底层 ASR 或通过 process_audio_chunk 传入
+    text = pipeline.asr.transcribe(audio, sample_rate=16000)
+    logger.info(f"🎤 识别出的文本 (ASR): {text}")
 
     print("\nAudioPipeline test done.")

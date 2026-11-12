@@ -15,13 +15,30 @@ rsync -avz --exclude '.*' . coki@192.168.1.24:/home/coki/humanAI/dev1/digital-hu
 #    python test.py
 #EOF
 
+#ssh coki@192.168.1.24 << 'EOF'
+#    cd /home/coki/humanAI/dev1/digital-human/
+#    # 进入项目目录
+#    source .venv/bin/activate
+#    # test pipeline.py
+##    export HF_ENDPOINT="https://hf-mirror.com"
+##    export PYTHONPATH=$PWD
+#
+#    python src/audio/pipeline.py
+#EOF
+
+#ssh coki@192.168.1.24 << 'EOF'
+#    cd /home/coki/humanAI/dev1/digital-human/
+#    # 进入项目目录
+#    source .venv/bin/activate
+#    python -m src.avatar.engine
+#EOF
+
 ssh coki@192.168.1.24 << 'EOF'
     cd /home/coki/humanAI/dev1/digital-human/
     # 进入项目目录
     source .venv/bin/activate
-    # test pipeline.py
+#    python -m src.llm.ollama_client
     export HF_ENDPOINT="https://hf-mirror.com"
     export PYTHONPATH=$PWD
-
-    python src/audio/pipeline.py
+    python -m scripts.test_text_to_avatar
 EOF
