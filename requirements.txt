@@ -17,6 +17,7 @@ librosa
 flask
 faster-whisper
 silero-vad
+mediapipe
 # CosyVoice
 hyperpyyaml
 modelscope

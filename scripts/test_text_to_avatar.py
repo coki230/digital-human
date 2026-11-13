@@ -1,15 +1,15 @@
 # scripts/test_text_to_avatar.py
 """
-完整本地测试：文本输入 → 数字人视频
+完整本地测试：文本输入 → LLM → TTS → FlashHead → 带音频的 mp4
+对齐官方 gradio_app_streaming 的保存方式（视频帧 + wav 混流）
 """
 from __future__ import annotations
 
 import sys
-import os
-from pathlib import Path
 import time
+from pathlib import Path
+
 import numpy as np
-import cv2
 from loguru import logger
 
 # ====================== 项目根目录 ======================
@@ -19,14 +19,14 @@ sys.path.insert(0, str(ROOT))
 # ====================== 导入模块 ======================
 from src.audio.pipeline import AudioPipeline, AudioConfig
 from src.avatar.engine import FlashHeadEngine
+from src.avatar.video_utils import save_audio_wav, save_video_with_audio
 from src.llm.ollama_client import OllamaClient
 from src.session.manager import SessionManager
-from src.llm.streaming_utils import StreamingSentenceBuffer
 
-# ====================== 配置区（请按实际修改） ======================
+# ====================== 配置区 ======================
 CONFIG = {
     # Ollama
-    "ollama_model": "qwen3.8:latest",          # 改成你本地的模型
+    "ollama_model": "qwen3.8:latest",
     "ollama_base_url": "http://localhost:11434",
 
     # FlashHead
@@ -35,59 +35,25 @@ CONFIG = {
     "model_type": "lite",
 
     # 参考图
-    "avatar_image": "assets/tx2.jpeg",   # 改成你的图片路径
+    "avatar_image": "assets/tx2.jpeg",
 
     # CosyVoice
     "tts_model_dir": "/home/coki/humanAI/dev1/model/CosyVoice-300M-SFT",
 
     # 输出
     "output_dir": "outputs/test_videos",
-    "fps": 25,
 }
-
-
-def resample_audio(audio: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.ndarray:
-    """简单重采样（线性插值，够用）"""
-    if orig_sr == target_sr:
-        return audio
-    duration = len(audio) / orig_sr
-    target_length = int(duration * target_sr)
-    x_old = np.linspace(0, 1, len(audio))
-    x_new = np.linspace(0, 1, target_length)
-    return np.interp(x_new, x_old, audio).astype(np.float32)
-
-
-def save_video(frames_list: list[np.ndarray], output_path: str, fps: int = 25):
-    """把帧列表保存为 mp4"""
-    if not frames_list:
-        logger.warning("No frames to save.")
-        return
-
-    # 合并所有帧
-    all_frames = np.concatenate(frames_list, axis=0)  # (T, H, W, 3)
-    height, width = all_frames.shape[1:3]
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-    for frame in all_frames:
-        # OpenCV 使用 BGR
-        bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        writer.write(bgr)
-
-    writer.release()
-    logger.info(f"Video saved to: {output_path}  ({len(all_frames)} frames)")
 
 
 def main():
     logger.info("========== 数字人本地测试启动 ==========")
 
-    # 1. 初始化各组件
+    # 1. 初始化组件
     logger.info("Initializing components...")
 
     audio_cfg = AudioConfig(
         tts_model_dir=CONFIG["tts_model_dir"],
-        asr_model_size="base",          # 本次测试用不到 ASR
+        asr_model_size="base",
         asr_language="zh",
     )
     audio_pipe = AudioPipeline(audio_cfg)
@@ -102,7 +68,10 @@ def main():
         base_url=CONFIG["ollama_base_url"],
         model=CONFIG["ollama_model"],
         temperature=0.7,
-        system_prompt="你是一个友好、自然、口语化的数字人助手。回答简洁，尽量用短句，适合语音播报。",
+        system_prompt=(
+            "你是一个友好、自然、口语化的数字人助手。"
+            "回答简洁，尽量用短句，适合语音播报。"
+        ),
     )
 
     manager = SessionManager(
@@ -120,52 +89,59 @@ def main():
     )
     logger.info(f"Session created with avatar: {CONFIG['avatar_image']}")
 
-    # 3. 准备输出目录
+    # 3. 输出目录
     output_dir = Path(CONFIG["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("\n" + "="*60)
-    print("输入文本后回车，数字人会生成对应视频（输入 q 退出）")
-    print("="*60 + "\n")
-
-    try:
-        user_input = "你好我是coki，很高兴认识你"
-    except Exception as e:
-        print("11111", e)
-        print("\n退出")
+    # 4. 测试输入（可改成 input() 做交互）
+    user_input = "你好我是coki，很高兴认识你"
+    # user_input = input("[你] ").strip()
+    # if not user_input or user_input.lower() in ("q", "quit", "exit"):
+    #     manager.close_session(session_id)
+    #     return
 
     logger.info(f"User: {user_input}")
     start_time = time.time()
 
-    # 收集所有生成的帧
-    all_frames = []
-    sentence_count = 0
-
-    # 使用流式分句版 chat
+    # 5. 跑完整链路（chat 内部会写 ctx.last_frames / last_tts_audio）
+    frame_count = 0
     try:
         for frames in manager.chat(session_id, user_input):
-            if frames is not None and len(frames) > 0:
-                all_frames.append(frames)
-                sentence_count += 1
-                logger.info(f"Received frames from sentence #{sentence_count}, shape={frames.shape}")
+            if frames is not None:
+                frame_count += 1
+                shape = getattr(frames, "shape", None)
+                logger.info(f"Received chunk #{frame_count}, shape={shape}")
     except Exception as e:
         logger.exception(f"Generation failed: {e}")
-
 
     elapsed = time.time() - start_time
     logger.info(f"Total generation time: {elapsed:.2f}s")
 
-    # 保存视频
-    if all_frames:
-        timestamp = time.strftime("%H%M%S")
-        output_path = str(output_dir / f"{timestamp}.mp4")
-        save_video(all_frames, output_path, fps=CONFIG["fps"])
-        print(f"→ 视频已保存: {output_path}\n")
+    # 6. 保存：官方方式（帧 list + wav → ffmpeg 混流）
+    ctx = manager.contexts.get(session_id)
+    frames_list = getattr(ctx, "last_frames", None) or []
+    audio_16k = getattr(ctx, "last_tts_audio", None)
+    audio_sr = getattr(ctx, "last_tts_sr", 16000) or 16000
+    fps = getattr(avatar_engine, "tgt_fps", 25)
+
+    if frames_list and audio_16k is not None and len(audio_16k) > 0:
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        wav_path = str(output_dir / f"tts_{ts}.wav")
+        mp4_path = str(output_dir / f"res_{ts}.mp4")
+
+        save_audio_wav(np.asarray(audio_16k, dtype=np.float32), wav_path, sample_rate=audio_sr)
+        save_video_with_audio(frames_list, mp4_path, wav_path, fps=fps)
+
+        print(f"→ 音频: {wav_path}")
+        print(f"→ 视频: {mp4_path}")
+        logger.info(f"Saved with audio: {mp4_path}")
+    elif frames_list:
+        logger.warning("有视频帧但没有 TTS 音频，跳过混流（只会静音）")
+        print("→ 有画面无音频：请检查 SessionManager 是否写入 ctx.last_tts_audio")
     else:
-        print("→ 没有生成有效视频帧\n")
+        print("→ 没有生成有效视频帧")
 
-
-    # 清理
+    # 7. 清理
     manager.close_session(session_id)
     logger.info("Test finished.")
 

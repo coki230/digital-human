@@ -79,51 +79,74 @@ class SessionManager:
         """
         return self.audio.process_audio_chunk(audio_chunk)
 
-    def chat(
-            self,
-            session_id: str,
-            user_text: str,
-    ) -> Generator[np.ndarray, None, None]:
-        """
-        流式分句版对话（低首响延迟）
-        """
+    def chat(self, session_id: str, user_text: str):
         ctx = self.contexts.get(session_id)
         if ctx is None:
-            raise ValueError(f"Session {session_id} not found")
+            raise ValueError(...)
 
         ctx.add_user(user_text)
         messages = ctx.get_messages()
 
-        full_response_parts = []
-        buffer = StreamingSentenceBuffer(min_sentence_length=4, max_buffer_length=70)
+        from src.llm.streaming_utils import StreamingSentenceBuffer
+        buffer = StreamingSentenceBuffer(min_sentence_length=6, max_buffer_length=70)
+
+        all_frames = []
+        all_audio_slices = []  # 与 all_frames 一一对应（每个元素长度 ≈ slice_audio_len）
+        full_parts = []
+
+        def handle_sentence(sentence: str):
+            s = sentence.strip()
+            if len(s) < 2 or all(c in "。！？.!?；;，,、 \n" for c in s):
+                return
+            full_parts.append(s)
+            logger.info(f"[Sentence] {s}")
+
+            tts_sr = self.audio.tts_sample_rate
+
+            def audio_gen():
+                for c in self.audio.text_to_speech_stream(s):
+                    if self.audio.is_interrupted():
+                        break
+                    c = np.asarray(c, dtype=np.float32).reshape(-1)
+                    if c.size:
+                        yield c
+
+            for frames, consumed_audio in self.avatar.feed_audio_stream(
+                    session_id, audio_gen(), sample_rate=tts_sr
+            ):
+                if self.audio.is_interrupted():
+                    break
+                all_frames.append(frames)
+                all_audio_slices.append(consumed_audio)
+                yield frames
 
         try:
-            # LLM 流式
             for token in self.llm.chat_stream(messages):
-                # 支持外部打断
                 if self.audio.is_interrupted():
-                    logger.info("Chat interrupted during LLM generation.")
                     break
+                for sent in buffer.feed(token):
+                    yield from handle_sentence(sent)
 
-                for sentence in buffer.feed(token):
-                    full_response_parts.append(sentence)
-                    logger.info(f"[Emit Sentence] {sentence}")
-
-                    # 立刻 TTS + 驱动数字人
-                    yield from self._speak_sentence(session_id, sentence)
-
-            # 处理最后剩余文本
-            last_sentence = buffer.flush()
-            if last_sentence and not self.audio.is_interrupted():
-                full_response_parts.append(last_sentence)
-                logger.info(f"[Emit Final] {last_sentence}")
-                yield from self._speak_sentence(session_id, last_sentence)
-
+            last = buffer.flush()
+            if last and not self.audio.is_interrupted():
+                yield from handle_sentence(last)
         finally:
-            # 记录完整回复
-            full_text = "".join(full_response_parts).strip()
-            if full_text:
-                ctx.add_assistant(full_text)
+            text = "".join(full_parts).strip()
+            if text:
+                ctx.add_assistant(text)
+
+            # 供测试脚本保存
+            ctx.last_frames = all_frames
+            ctx.last_audio_slices = all_audio_slices
+            if all_audio_slices:
+                ctx.last_tts_audio = np.concatenate(all_audio_slices).astype(np.float32)
+                ctx.last_tts_sr = self.avatar.sample_rate  # 已是 16k
+                logger.info(
+                    f"2last_tts_audio: n={len(ctx.last_tts_audio)} sr={ctx.last_tts_sr} "
+                    f"2dur={len(ctx.last_tts_audio) / ctx.last_tts_sr:.3f}s"
+                )
+            else:
+                ctx.last_tts_audio = None
 
     def _speak_sentence(self, session_id: str, sentence: str) -> Generator[np.ndarray, None, None]:
         """把单句送去 TTS 并驱动 Avatar"""

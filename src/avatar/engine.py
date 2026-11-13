@@ -131,88 +131,74 @@ class FlashHeadEngine:
             session_id: str,
             audio_chunk: np.ndarray,
             sample_rate: int = 16000,
-    ) -> Optional[np.ndarray]:
+    ) -> Optional[tuple]:
+        """
+        返回 (frames, consumed_audio) 或 None
+        - frames: (T,H,W,3) uint8
+        - consumed_audio: 本次推理对应的 float32 音频（长度 = slice_audio_len）
+        """
         state = self.sessions.get(session_id)
         if state is None:
-            raise ValueError(f"Session {session_id} not found. Call create_session first.")
+            raise ValueError(f"Session {session_id} not found")
 
         if state.interrupted:
             return None
 
-        # 统一成 1D float32
         audio_chunk = np.asarray(audio_chunk, dtype=np.float32).reshape(-1)
         if audio_chunk.size == 0:
             return None
 
-        if sample_rate != self.sample_rate:
-            logger.warning(f"Sample rate mismatch: {sample_rate} vs {self.sample_rate}")
-
-        # 写入环形缓存
         state.audio_dq.extend(audio_chunk.tolist())
-        state.pending_samples += audio_chunk.size
+        state.pending_samples += len(audio_chunk)
         state.update_active()
 
-        # 不够一个官方 slice，先不推理
         if state.pending_samples < self.slice_audio_len:
             return None
 
-        # 一次只消费整数个 slice（一般每次 1 个）
         state.pending_samples -= self.slice_audio_len
-        # 若一次来了很多音频，可改成 while pending >= slice_audio_len
+
+        # 本次 slice 对应的音频：环形缓存的最后 slice_audio_len 个点
+        # 官方是整段 dq 送去 embedding，但保存预览时用的是当前 slice 的原始波形
+        dq_list = list(state.audio_dq)
+        consumed_audio = np.array(dq_list[-self.slice_audio_len:], dtype=np.float32)
 
         state.is_generating = True
         try:
             audio_array = np.array(state.audio_dq, dtype=np.float32)
-
-            # 关键：必须带官方的 start/end idx
             audio_embedding = get_audio_embedding(
                 self.pipeline,
                 audio_array,
                 self.audio_start_idx,
                 self.audio_end_idx,
             )
-
             video = run_pipeline(self.pipeline, audio_embedding)
+            video = video[self.motion_frames_num:]
 
-            # 去掉与上一窗重叠的 motion 帧
             if isinstance(video, torch.Tensor):
-                video = video[self.motion_frames_num:]
-                frames = video.cpu().numpy()
+                frames = video.cpu()  # 保持 tensor，方便官方 save
             else:
-                frames = video[self.motion_frames_num:]
+                frames = torch.from_numpy(np.asarray(video))
 
-            if frames.dtype != np.uint8:
-                frames = np.clip(frames, 0, 255).astype(np.uint8)
-
-            return frames
+            return frames, consumed_audio
 
         except Exception as e:
-            logger.error(f"Inference failed in session {session_id}: {e}")
+            logger.error(f"Inference failed: {e}")
             return None
         finally:
             state.is_generating = False
 
-    def feed_audio_stream(
-        self,
-        session_id: str,
-        audio_generator: Generator[np.ndarray, None, None],
-        sample_rate: int = 16000,
-    ) -> Generator[np.ndarray, None, None]:
-
+    def feed_audio_stream(self, session_id, audio_generator, sample_rate=16000):
         state = self.sessions.get(session_id)
         if state is None:
             raise ValueError(...)
 
-        state.interrupted = False  # 开始前清除打断标记
-
+        state.interrupted = False
         for chunk in audio_generator:
             if state.interrupted:
-                logger.info(f"Session {session_id} stream stopped by interrupt")
                 break
-
-            frames = self.feed_audio(session_id, chunk, sample_rate)
-            if frames is not None:
-                yield frames
+            result = self.feed_audio(session_id, chunk, sample_rate)
+            if result is not None:
+                yield result  # (frames, consumed_audio)
 
 
 # 简单测试

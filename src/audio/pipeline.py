@@ -184,33 +184,50 @@ class AudioPipeline:
     # 输出端：文本 → 流式音频
     # ------------------------------------------------------------------
 
-    def text_to_speech_stream(
-            self,
-            text: str,
-            prompt_speech_path: Optional[str] = None,
-    ) -> Generator[np.ndarray, None, None]:
+
+    def text_to_speech_stream(self, text: str, prompt_speech_path=None, target_sr: int = 16000):
         """
-        流式 TTS，yield 音频 chunk (float32)。
-        支持中途 interrupt()。
+        流式 TTS，默认重采样到 16k 再 yield
         """
         self._interrupt_flag.clear()
+        chunk = self.tts.text_2_audio(text)
+        yield chunk
 
-        try:
-            for chunk in self.tts.text_2_audio(
-                    text=text,
-                    speaker=self.cfg.tts_speaker,
-            ):
-                if self.is_interrupted():
-                    logger.info("TTS stream interrupted.")
-                    break
-                yield chunk
-        except Exception as e:
-            logger.error(f"TTS failed: {e}")
-            raise
 
-    def text_to_speech(self, text: str, prompt_speech_path: Optional[str] = None) -> np.ndarray:
+    def text_to_speech_stream_back(self, text: str, prompt_speech_path=None, target_sr: int = 16000):
+        """
+        流式 TTS，默认重采样到 16k 再 yield
+        """
+        self._interrupt_flag.clear()
+        orig_sr = self.tts.get_sample_rate()
+        for chunk in self.tts.text_2_audio(text):
+        # for chunk in self.tts.synthesize_stream(
+        #         text=text,
+        #         prompt_speech_path=prompt_speech_path or self.cfg.tts_prompt_speech,
+        #         prompt_text=self.cfg.tts_prompt_text,
+        #         speaker=self.cfg.tts_speaker,
+        # ):
+            if self.is_interrupted():
+                break
+            chunk = np.asarray(chunk, dtype=np.float32).reshape(-1)
+
+            if chunk.size == 0:
+                continue
+            yield chunk
+
+    def text_to_speech(self, text: str, prompt_speech_path: Optional[str] = None, target_sr: int = 16000) -> np.ndarray:
         """非流式完整合成（调试用）"""
-        chunks = list(self.text_to_speech_stream(text, prompt_speech_path))
+        self._interrupt_flag.clear()
+
+        chunks = []
+        for chunk in self.tts.text_2_audio(text):
+            if self.is_interrupted():
+                break
+            chunk = np.asarray(chunk, dtype=np.float32).reshape(-1)
+            if chunk.size == 0:
+                continue
+            chunks.append(chunk)
+
         if not chunks:
             return np.array([], dtype=np.float32)
         return np.concatenate(chunks)
@@ -267,7 +284,7 @@ if __name__ == "__main__":
 
     logger.info("=== 3. 模拟输入 Pipeline 的 ASR 模块 ===")
     # 这里直接调用底层 ASR 或通过 process_audio_chunk 传入
-    text = pipeline.asr.transcribe(audio, sample_rate=16000)
-    logger.info(f"🎤 识别出的文本 (ASR): {text}")
+    text_input = pipeline.asr.transcribe(audio, sample_rate=16000)
+    logger.info(f"🎤 识别出的文本 (ASR): {text_input}")
 
     print("\nAudioPipeline test done.")

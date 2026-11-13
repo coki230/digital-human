@@ -34,6 +34,8 @@ rsync -avz --exclude '.*' . coki@192.168.1.24:/home/coki/humanAI/dev1/digital-hu
 #EOF
 
 ssh coki@192.168.1.24 << 'EOF'
+    # 删除上一次生成的音视频
+    rm -rf /home/coki/humanAI/dev1/digital-human/outputs/test_videos/*
     cd /home/coki/humanAI/dev1/digital-human/
     # 进入项目目录
     source .venv/bin/activate
