@@ -185,37 +185,16 @@ class AudioPipeline:
     # ------------------------------------------------------------------
 
 
-    def text_to_speech_stream(self, text: str, prompt_speech_path=None, target_sr: int = 16000):
+    def text_to_speech_stream(self, text: str):
         """
         流式 TTS，默认重采样到 16k 再 yield
         """
         self._interrupt_flag.clear()
-        chunk = self.tts.text_2_audio(text)
-        yield chunk
+        chunk = self.tts.text_2_audio(text, stream=True)
+        yield from chunk
 
 
-    def text_to_speech_stream_back(self, text: str, prompt_speech_path=None, target_sr: int = 16000):
-        """
-        流式 TTS，默认重采样到 16k 再 yield
-        """
-        self._interrupt_flag.clear()
-        orig_sr = self.tts.get_sample_rate()
-        for chunk in self.tts.text_2_audio(text):
-        # for chunk in self.tts.synthesize_stream(
-        #         text=text,
-        #         prompt_speech_path=prompt_speech_path or self.cfg.tts_prompt_speech,
-        #         prompt_text=self.cfg.tts_prompt_text,
-        #         speaker=self.cfg.tts_speaker,
-        # ):
-            if self.is_interrupted():
-                break
-            chunk = np.asarray(chunk, dtype=np.float32).reshape(-1)
-
-            if chunk.size == 0:
-                continue
-            yield chunk
-
-    def text_to_speech(self, text: str, prompt_speech_path: Optional[str] = None, target_sr: int = 16000) -> np.ndarray:
+    def text_to_speech(self, text: str) -> np.ndarray:
         """非流式完整合成（调试用）"""
         self._interrupt_flag.clear()
 

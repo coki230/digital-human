@@ -10,7 +10,6 @@ from loguru import logger
 
 from src.audio.pipeline import AudioPipeline, AudioConfig
 from src.avatar.engine import FlashHeadEngine
-from src.llm.streaming_utils import StreamingSentenceBuffer
 from src.session.context import SessionContext
 
 
